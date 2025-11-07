@@ -2,32 +2,51 @@
 // SPOTIFY CONFIGURATION
 // ==========================================
 
-// Replace with your Spotify Client ID
-const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d'; // ⚠️ REPLACE THIS
+const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d';
 
-// Determine environment and set redirect URI
 const isProduction = window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost';
 
-const REDIRECT_URI = isProduction ?
-    'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html' // Your actual Vercel URL
-    :
-    'http://127.0.0.1:3000/callback.html';
+const REDIRECT_URI = isProduction 
+    ? 'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html'
+    : 'http://127.0.0.1:3000/callback.html';
 
 // ==========================================
-// TOKEN MANAGEMENT
+// PKCE HELPER FUNCTIONS
+// ==========================================
+
+function generateRandomString(length) {
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const values = crypto.getRandomValues(new Uint8Array(length));
+    return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+}
+
+async function sha256(plain) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    return window.crypto.subtle.digest('SHA-256', data);
+}
+
+function base64encode(input) {
+    return btoa(String.fromCharCode(...new Uint8Array(input)))
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+}
+
+// ==========================================
+// TOKEN MANAGEMENT WITH PKCE
 // ==========================================
 
 function getToken() {
     const token = localStorage.getItem('spotify_token');
     const expiry = localStorage.getItem('spotify_token_expiry');
-
+    
     if (!token || !expiry) {
         console.log('No token found, redirecting to login...');
         redirectToSpotifyLogin();
         return null;
     }
-
-    // Check if token expired
+    
     if (Date.now() > parseInt(expiry)) {
         console.log('Token expired, redirecting to login...');
         localStorage.removeItem('spotify_token');
@@ -35,18 +54,33 @@ function getToken() {
         redirectToSpotifyLogin();
         return null;
     }
-
+    
     return token;
 }
 
-function redirectToSpotifyLogin() {
-    const scopes = 'user-top-read user-read-private user-read-email';
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&show_dialog=true`;
+async function redirectToSpotifyLogin() {
+    const codeVerifier = generateRandomString(64);
+    const hashed = await sha256(codeVerifier);
+    const codeChallenge = base64encode(hashed);
 
-    window.location.href = authUrl;
+    localStorage.setItem('code_verifier', codeVerifier);
+
+    const scopes = 'user-top-read user-read-private user-read-email';
+    const authUrl = new URL('https://accounts.spotify.com/authorize');
+
+    const params = {
+        response_type: 'code',
+        client_id: CLIENT_ID,
+        scope: scopes,
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge,
+        redirect_uri: REDIRECT_URI,
+    };
+
+    authUrl.search = new URLSearchParams(params).toString();
+    window.location.href = authUrl.toString();
 }
 
-// Get token
 const token = getToken();
 
 if (!token) {
@@ -73,7 +107,6 @@ async function fetchWebApi(endpoint, method, body) {
         body: body ? JSON.stringify(body) : undefined
     });
 
-    // Handle unauthorized (token expired)
     if (res.status === 401) {
         console.log('Token invalid, clearing and redirecting to login...');
         localStorage.removeItem('spotify_token');
@@ -85,7 +118,6 @@ async function fetchWebApi(endpoint, method, body) {
     return await res.json();
 }
 
-// Fetch user's top tracks from Spotify
 async function getTopTracks() {
     try {
         const response = await fetchWebApi(
@@ -99,7 +131,6 @@ async function getTopTracks() {
     }
 }
 
-// Search tracks on Spotify
 async function searchTracks(query) {
     try {
         const response = await fetchWebApi(
@@ -149,7 +180,6 @@ let currentView = 'library';
 let audioElement = new Audio();
 let searchTimeout = null;
 
-// Song database
 let songs = [];
 let playlist = [];
 let recentlyPlayed = [];
@@ -199,23 +229,16 @@ function formatTime(seconds) {
 // ==========================================
 
 function loadSong(index) {
-    console.log('🎵 Loading song at index:', index);
     currentSongIndex = index;
     const song = playlist[index];
 
-    if (!song) {
-        console.error('❌ Song not found at index:', index);
-        return;
-    }
-
-    console.log('📀 Song:', song.title, 'by', song.artist);
+    if (!song) return;
 
     songTitle.textContent = song.title;
     artistName.textContent = song.artist;
     duration = song.duration;
     currentTime = 0;
 
-    // Update album art
     if (song.albumImage) {
         albumArt.style.backgroundImage = `url(${song.albumImage})`;
         albumArt.style.backgroundSize = 'cover';
@@ -224,14 +247,11 @@ function loadSong(index) {
         albumArt.style.background = `linear-gradient(135deg, ${song.color} 0%, ${song.color}dd 100%)`;
     }
 
-    // Load audio preview
     if (song.previewUrl) {
         audioElement.src = song.previewUrl;
         audioElement.volume = volume;
         audioElement.load();
-        console.log('✅ Audio loaded');
     } else {
-        console.warn('⚠️ No preview URL available');
         audioElement.src = '';
     }
 
@@ -272,8 +292,6 @@ function updateProgress() {
 }
 
 function togglePlay() {
-    console.log('🎮 Toggle play clicked');
-
     isPlaying = !isPlaying;
 
     if (isPlaying) {
@@ -282,23 +300,15 @@ function togglePlay() {
         vinylRecord.classList.add('spinning');
 
         if (audioElement.src) {
-            console.log('▶️ Playing');
             audioElement.play().catch(err => {
-                console.error('❌ Playback error:', err);
+                console.error('Playback error:', err);
                 isPlaying = false;
                 playIcon.classList.remove('hidden');
                 pauseIcon.classList.add('hidden');
                 vinylRecord.classList.remove('spinning');
             });
-        } else {
-            console.warn('⚠️ No audio source');
-            isPlaying = false;
-            playIcon.classList.remove('hidden');
-            pauseIcon.classList.add('hidden');
-            vinylRecord.classList.remove('spinning');
         }
     } else {
-        console.log('⏸️ Paused');
         playIcon.classList.remove('hidden');
         pauseIcon.classList.add('hidden');
         vinylRecord.classList.remove('spinning');
@@ -399,10 +409,6 @@ function updateFavoriteButton() {
     }
 }
 
-// ==========================================
-// SEARCH FUNCTIONS
-// ==========================================
-
 async function handleSearch() {
     const searchTerm = searchInput.value.trim();
 
@@ -417,16 +423,13 @@ async function handleSearch() {
 
     playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Searching...</div>';
 
-    searchTimeout = setTimeout(async() => {
-        console.log('🔍 Searching for:', searchTerm);
-
+    searchTimeout = setTimeout(async () => {
         const results = await searchTracks(searchTerm);
 
         if (results && results.length > 0) {
             searchResults = results.map((track, index) => convertSpotifyTrack(track, index));
             playlist = searchResults;
             updatePlaylistUI();
-            console.log('✅ Found', results.length, 'tracks');
         } else {
             playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No results found</div>';
         }
@@ -446,10 +449,6 @@ function filterPlaylist() {
     updatePlaylistUI();
 }
 
-// ==========================================
-// UI UPDATE FUNCTIONS
-// ==========================================
-
 function updatePlaylistUI() {
     playlistContainer.innerHTML = '';
 
@@ -459,15 +458,15 @@ function updatePlaylistUI() {
     }
 
     playlist.forEach((song, index) => {
-                const card = document.createElement('div');
-                card.className = 'song-card';
-                if (playlist[currentSongIndex] && playlist[currentSongIndex].id === song.id) {
-                    card.classList.add('active');
-                }
+        const card = document.createElement('div');
+        card.className = 'song-card';
+        if (playlist[currentSongIndex] && playlist[currentSongIndex].id === song.id) {
+            card.classList.add('active');
+        }
 
-                const isFavorited = favorites.includes(song.id);
+        const isFavorited = favorites.includes(song.id);
 
-                card.innerHTML = `
+        card.innerHTML = `
             <div class="song-thumbnail" style="${song.albumImage ? `background-image: url(${song.albumImage}); background-size: cover;` : `background: ${song.color}`}">
                 ${!song.albumImage ? `<svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
@@ -483,13 +482,10 @@ function updatePlaylistUI() {
                 </svg>
             </button>
             <div class="song-card-duration">${formatTime(song.duration)}</div>
-            ${!song.previewUrl ? '<div class="no-preview">No Preview</div>' : ''}
         `;
 
-        // Click to play
         card.addEventListener('click', (e) => {
             if (!e.target.closest('.song-card-favorite')) {
-                console.log('🎵 Card clicked:', song.title);
                 loadSong(index);
                 
                 if (!isPlaying) {
@@ -504,7 +500,6 @@ function updatePlaylistUI() {
             }
         });
 
-        // Favorite button
         const favoriteButton = card.querySelector('.song-card-favorite');
         favoriteButton.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -541,10 +536,6 @@ function switchView(view) {
     filterPlaylist();
 }
 
-// ==========================================
-// EVENT LISTENERS
-// ==========================================
-
 playPauseBtn.addEventListener('click', togglePlay);
 progressBar.addEventListener('click', seek);
 volumeSlider.addEventListener('click', changeVolume);
@@ -568,7 +559,6 @@ menuItems.forEach(item => {
     });
 });
 
-// Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
 
@@ -588,10 +578,6 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// ==========================================
-// INITIALIZATION
-// ==========================================
-
 setInterval(updateProgress, 100);
 
 async function initializePlayer() {
@@ -608,16 +594,13 @@ async function initializePlayer() {
             updatePlaylistUI();
             totalTimeEl.textContent = formatTime(duration);
             currentTimeEl.textContent = formatTime(currentTime);
-            
-            console.log('✅ Player initialized with', songs.length, 'songs');
         } else {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found. Please check your Spotify token.</div>';
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found</div>';
         }
     } catch (error) {
         console.error('Failed to initialize player:', error);
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music. Please refresh the page.</div>';
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music</div>';
     }
 }
 
-// Start the app
 initializePlayer();
