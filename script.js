@@ -34,25 +34,8 @@ function base64encode(input) {
 }
 
 // ==========================================
-// TOKEN MANAGEMENT WITH PKCE
+// TOKEN MANAGEMENT
 // ==========================================
-
-function getToken() {
-    const token = localStorage.getItem('spotify_token');
-    const expiry = localStorage.getItem('spotify_token_expiry');
-    
-    if (!token || !expiry) {
-        return null;
-    }
-    
-    if (Date.now() > parseInt(expiry)) {
-        localStorage.removeItem('spotify_token');
-        localStorage.removeItem('spotify_token_expiry');
-        return null;
-    }
-    
-    return token;
-}
 
 async function redirectToSpotifyLogin() {
     const codeVerifier = generateRandomString(64);
@@ -77,28 +60,36 @@ async function redirectToSpotifyLogin() {
     window.location.href = authUrl.toString();
 }
 
-// ==========================================
-// CHECK TOKEN AND REDIRECT IF NEEDED
-// ==========================================
+function checkToken() {
+    const token = localStorage.getItem('spotify_token');
+    const expiry = localStorage.getItem('spotify_token_expiry');
+    
+    if (!token || !expiry || Date.now() > parseInt(expiry)) {
+        console.log('No valid token, redirecting to login...');
+        redirectToSpotifyLogin();
+        return false;
+    }
+    
+    return true;
+}
 
-const token = getToken();
-
-if (!token) {
-    console.log('No valid token, redirecting to Spotify login...');
-    redirectToSpotifyLogin();
-    // Don't execute the rest of the code
+// Check token on page load
+if (!checkToken()) {
+    // Stop execution - redirecting to login
 } else {
-    console.log('Token found, initializing app...');
-    initializeApp();
+    // Token exists, start the app
+    startApp();
 }
 
 // ==========================================
-// MAIN APP FUNCTION
+// MAIN APPLICATION
 // ==========================================
 
-function initializeApp() {
+function startApp() {
+    console.log('Starting music player...');
+
     // ==========================================
-    // SPOTIFY API FUNCTIONS
+    // API FUNCTIONS
     // ==========================================
 
     async function fetchWebApi(endpoint, method, body) {
@@ -118,9 +109,7 @@ function initializeApp() {
         });
 
         if (res.status === 401) {
-            console.log('Token invalid, redirecting to login...');
-            localStorage.removeItem('spotify_token');
-            localStorage.removeItem('spotify_token_expiry');
+            localStorage.clear();
             redirectToSpotifyLogin();
             return null;
         }
@@ -130,10 +119,7 @@ function initializeApp() {
 
     async function getTopTracks() {
         try {
-            const response = await fetchWebApi(
-                'v1/me/top/tracks?time_range=long_term&limit=50',
-                'GET'
-            );
+            const response = await fetchWebApi('v1/me/top/tracks?time_range=long_term&limit=50', 'GET');
             return response.items;
         } catch (error) {
             console.error('Error fetching tracks:', error);
@@ -143,10 +129,7 @@ function initializeApp() {
 
     async function searchTracks(query) {
         try {
-            const response = await fetchWebApi(
-                `v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
-                'GET'
-            );
+            const response = await fetchWebApi(`v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, 'GET');
             return response.tracks.items;
         } catch (error) {
             console.error('Error searching tracks:', error);
@@ -154,13 +137,8 @@ function initializeApp() {
         }
     }
 
-    // ==========================================
-    // DATA CONVERSION
-    // ==========================================
-
     function convertSpotifyTrack(track, index) {
         const colors = ['#8B5CF6', '#3B82F6', '#EC4899', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#059669', '#F97316', '#06B6D4'];
-
         return {
             id: track.id,
             title: track.name,
@@ -189,12 +167,10 @@ function initializeApp() {
     let currentView = 'library';
     let audioElement = new Audio();
     let searchTimeout = null;
-
     let songs = [];
     let playlist = [];
     let recentlyPlayed = [];
     let favorites = [];
-    let searchResults = [];
 
     // ==========================================
     // DOM ELEMENTS
@@ -225,7 +201,7 @@ function initializeApp() {
     const favoriteBtn = document.getElementById('favoriteBtn');
 
     // ==========================================
-    // UTILITY FUNCTIONS
+    // FUNCTIONS
     // ==========================================
 
     function formatTime(seconds) {
@@ -234,14 +210,9 @@ function initializeApp() {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
-    // ==========================================
-    // PLAYBACK FUNCTIONS
-    // ==========================================
-
     function loadSong(index) {
         currentSongIndex = index;
         const song = playlist[index];
-
         if (!song) return;
 
         songTitle.textContent = song.title;
@@ -308,7 +279,6 @@ function initializeApp() {
             playIcon.classList.add('hidden');
             pauseIcon.classList.remove('hidden');
             vinylRecord.classList.add('spinning');
-
             if (audioElement.src) {
                 audioElement.play().catch(err => {
                     console.error('Playback error:', err);
@@ -322,7 +292,6 @@ function initializeApp() {
             playIcon.classList.remove('hidden');
             pauseIcon.classList.add('hidden');
             vinylRecord.classList.remove('spinning');
-
             if (audioElement.src) {
                 audioElement.pause();
             }
@@ -333,11 +302,9 @@ function initializeApp() {
         const rect = progressBar.getBoundingClientRect();
         const percentage = (e.clientX - rect.left) / rect.width;
         currentTime = Math.max(0, Math.min(1, percentage)) * duration;
-
         if (audioElement.src) {
             audioElement.currentTime = currentTime;
         }
-
         const clampedPercentage = Math.max(0, Math.min(100, percentage * 100));
         progressFill.style.width = `${clampedPercentage}%`;
         progressHandle.style.left = `${clampedPercentage}%`;
@@ -348,9 +315,7 @@ function initializeApp() {
         const rect = volumeSlider.getBoundingClientRect();
         const percentage = (e.clientX - rect.left) / rect.width;
         volume = Math.max(0, Math.min(1, percentage));
-
         audioElement.volume = volume;
-
         const clampedPercentage = volume * 100;
         volumeFill.style.width = `${clampedPercentage}%`;
         volumeHandle.style.left = `${clampedPercentage}%`;
@@ -399,13 +364,11 @@ function initializeApp() {
     function toggleFavorite() {
         const song = playlist[currentSongIndex];
         const index = favorites.indexOf(song.id);
-
         if (index > -1) {
             favorites.splice(index, 1);
         } else {
             favorites.push(song.id);
         }
-
         updateFavoriteButton();
         updatePlaylistUI();
     }
@@ -421,49 +384,38 @@ function initializeApp() {
 
     async function handleSearch() {
         const searchTerm = searchInput.value.trim();
-
-        if (searchTimeout) {
-            clearTimeout(searchTimeout);
-        }
-
+        if (searchTimeout) clearTimeout(searchTimeout);
         if (!searchTerm) {
             filterPlaylist();
             return;
         }
-
         playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Searching...</div>';
-
         searchTimeout = setTimeout(async () => {
             const results = await searchTracks(searchTerm);
-
             if (results && results.length > 0) {
-                searchResults = results.map((track, index) => convertSpotifyTrack(track, index));
-                playlist = searchResults;
+                playlist = results.map((track, index) => convertSpotifyTrack(track, index));
                 updatePlaylistUI();
             } else {
-                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No results found</div>';
+                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No results</div>';
             }
         }, 500);
     }
 
     function filterPlaylist() {
         let filteredSongs = [...songs];
-
         if (currentView === 'favorites') {
             filteredSongs = songs.filter(song => favorites.includes(song.id));
         } else if (currentView === 'recent') {
             filteredSongs = recentlyPlayed.map(id => songs.find(s => s.id === id)).filter(Boolean);
         }
-
         playlist = filteredSongs.length > 0 ? filteredSongs : songs;
         updatePlaylistUI();
     }
 
     function updatePlaylistUI() {
         playlistContainer.innerHTML = '';
-
         if (playlist.length === 0) {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No songs available</div>';
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No songs</div>';
             return;
         }
 
@@ -478,9 +430,7 @@ function initializeApp() {
 
             card.innerHTML = `
                 <div class="song-thumbnail" style="${song.albumImage ? `background-image: url(${song.albumImage}); background-size: cover;` : `background: ${song.color}`}">
-                    ${!song.albumImage ? `<svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
-                    </svg>` : ''}
+                    ${!song.albumImage ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>` : ''}
                 </div>
                 <div class="song-card-info">
                     <div class="song-card-title">${song.title}</div>
@@ -497,7 +447,6 @@ function initializeApp() {
             card.addEventListener('click', (e) => {
                 if (!e.target.closest('.song-card-favorite')) {
                     loadSong(index);
-                    
                     if (!isPlaying) {
                         setTimeout(() => togglePlay(), 100);
                     } else {
@@ -515,17 +464,14 @@ function initializeApp() {
                 e.stopPropagation();
                 const songId = e.currentTarget.dataset.songId;
                 const favIndex = favorites.indexOf(songId);
-
                 if (favIndex > -1) {
                     favorites.splice(favIndex, 1);
                 } else {
                     favorites.push(songId);
                 }
-
                 if (playlist[currentSongIndex] && playlist[currentSongIndex].id === songId) {
                     updateFavoriteButton();
                 }
-
                 updatePlaylistUI();
             });
 
@@ -559,7 +505,6 @@ function initializeApp() {
     nextBtn.addEventListener('click', nextTrack);
     favoriteBtn.addEventListener('click', toggleFavorite);
     searchInput.addEventListener('input', handleSearch);
-
     searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             searchInput.value = '';
@@ -568,14 +513,11 @@ function initializeApp() {
     });
 
     menuItems.forEach(item => {
-        item.addEventListener('click', () => {
-            switchView(item.dataset.view);
-        });
+        item.addEventListener('click', () => switchView(item.dataset.view));
     });
 
     document.addEventListener('keydown', (e) => {
         if (e.target.tagName === 'INPUT') return;
-
         switch(e.code) {
             case 'Space':
                 e.preventDefault();
@@ -592,36 +534,27 @@ function initializeApp() {
         }
     });
 
-    // ==========================================
-    // INITIALIZATION
-    // ==========================================
-
     setInterval(updateProgress, 100);
 
-    async function initializePlayer() {
-        try {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
-            
-            const spotifyTracks = await getTopTracks();
-            
-            if (spotifyTracks && spotifyTracks.length > 0) {
-                songs = spotifyTracks.map((track, index) => convertSpotifyTrack(track, index));
-                playlist = [...songs];
-                
-                loadSong(0);
-                updatePlaylistUI();
-                totalTimeEl.textContent = formatTime(duration);
-                currentTimeEl.textContent = formatTime(currentTime);
-                
-                console.log('✅ Player initialized with', songs.length, 'songs');
-            } else {
-                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found</div>';
-            }
-        } catch (error) {
-            console.error('Failed to initialize player:', error);
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music</div>';
+    // ==========================================
+    // INITIALIZE
+    // ==========================================
+
+    async function init() {
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading...</div>';
+        const tracks = await getTopTracks();
+        if (tracks && tracks.length > 0) {
+            songs = tracks.map((track, index) => convertSpotifyTrack(track, index));
+            playlist = [...songs];
+            loadSong(0);
+            updatePlaylistUI();
+            totalTimeEl.textContent = formatTime(duration);
+            currentTimeEl.textContent = formatTime(currentTime);
+            console.log('✅ Loaded', songs.length, 'songs');
+        } else {
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found</div>';
         }
     }
 
-    initializePlayer();
+    init();
 }
