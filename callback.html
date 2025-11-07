@@ -29,69 +29,134 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .error-box {
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            max-width: 500px;
+        }
     </style>
 </head>
 <body>
     <div>
-        <div class="spinner"></div>
-        <h2 id="status">🎵 Connecting...</h2>
+        <div class="spinner" id="spinner"></div>
+        <h2 id="status">🎵 Connecting to Spotify...</h2>
         <p id="message">Please wait...</p>
+        <div id="error-details" class="error-box" style="display: none;"></div>
     </div>
 
     <script>
         const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d';
         
-        const isProduction = window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost';
+        // Get the current hostname to determine redirect URI
+        const currentHostname = window.location.hostname;
+        const currentProtocol = window.location.protocol;
+        const currentPort = window.location.port;
         
-        const REDIRECT_URI = isProduction 
-            ? 'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html'
-            : 'http://127.0.0.1:3000/callback.html';
+        // Build the exact redirect URI (must match what was sent in authorization)
+        let REDIRECT_URI;
+        if (currentHostname === '127.0.0.1' || currentHostname === 'localhost') {
+            REDIRECT_URI = `${currentProtocol}//${currentHostname}:${currentPort}/callback.html`;
+        } else {
+            REDIRECT_URI = `${currentProtocol}//${currentHostname}/callback.html`;
+        }
 
+        console.log('=== CALLBACK DEBUG ===');
+        console.log('Current URL:', window.location.href);
+        console.log('Redirect URI:', REDIRECT_URI);
+        
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
         const error = urlParams.get('error');
 
+        console.log('Code received:', code ? 'Yes' : 'No');
+        console.log('Error:', error);
+
         if (error) {
-            document.getElementById('status').innerHTML = '❌ Error';
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('status').innerHTML = '❌ Authorization Failed';
             document.getElementById('message').innerHTML = `Error: ${error}`;
         } else if (code) {
             const codeVerifier = localStorage.getItem('code_verifier');
+            
+            console.log('Code verifier found:', codeVerifier ? 'Yes' : 'No');
+
+            if (!codeVerifier) {
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('status').innerHTML = '❌ Missing Code Verifier';
+                document.getElementById('message').innerHTML = 'Please try logging in again';
+                setTimeout(() => {
+                    localStorage.clear();
+                    window.location.href = 'index.html';
+                }, 3000);
+                return;
+            }
+
+            // Exchange code for token
+            const tokenParams = {
+                client_id: CLIENT_ID,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: REDIRECT_URI,
+                code_verifier: codeVerifier,
+            };
+
+            console.log('Token request params:', tokenParams);
 
             fetch('https://accounts.spotify.com/api/token', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
-                body: new URLSearchParams({
-                    client_id: CLIENT_ID,
-                    grant_type: 'authorization_code',
-                    code: code,
-                    redirect_uri: REDIRECT_URI,
-                    code_verifier: codeVerifier,
-                }),
+                body: new URLSearchParams(tokenParams),
             })
-            .then(response => response.json())
+            .then(response => {
+                console.log('Token response status:', response.status);
+                return response.json();
+            })
             .then(data => {
+                console.log('Token response:', data);
+                
                 if (data.access_token) {
+                    console.log('✅ Token received!');
                     localStorage.setItem('spotify_token', data.access_token);
                     localStorage.setItem('spotify_token_expiry', Date.now() + (data.expires_in * 1000));
                     localStorage.removeItem('code_verifier');
                     
                     document.getElementById('status').innerHTML = '✅ Success!';
+                    document.getElementById('message').innerHTML = 'Redirecting to music player...';
                     
                     setTimeout(() => {
                         window.location.href = 'index.html';
                     }, 1000);
                 } else {
-                    throw new Error('No token');
+                    throw new Error(data.error_description || data.error || 'No access token received');
                 }
             })
             .catch(err => {
-                document.getElementById('status').innerHTML = '❌ Failed';
-                document.getElementById('message').innerHTML = err.message;
+                console.error('Token exchange error:', err);
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('status').innerHTML = '❌ Token Exchange Failed';
+                document.getElementById('message').innerHTML = 'Failed to get access token';
+                
+                const errorBox = document.getElementById('error-details');
+                errorBox.style.display = 'block';
+                errorBox.innerHTML = `
+                    <strong>Error Details:</strong><br>
+                    ${err.message}<br><br>
+                    <strong>Redirect URI:</strong><br>
+                    ${REDIRECT_URI}<br><br>
+                    <button onclick="localStorage.clear(); window.location.href='index.html'" style="padding: 10px 20px; background: #1DB954; color: white; border: none; border-radius: 20px; cursor: pointer; margin-top: 10px;">
+                        Try Again
+                    </button>
+                `;
             });
         } else {
-            document.getElementById('status').innerHTML = '⚠️ No Code';
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('status').innerHTML = '⚠️ No Authorization Code';
+            document.getElementById('message').innerHTML = 'No code received from Spotify';
         }
     </script>
 </body>
