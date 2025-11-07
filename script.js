@@ -3,12 +3,7 @@
 // ==========================================
 
 const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d';
-
-const isProduction = window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost';
-
-const REDIRECT_URI = isProduction 
-    ? 'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html'
-    : 'http://127.0.0.1:3000/callback.html';
+const REDIRECT_URI = 'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html';
 
 // ==========================================
 // PKCE HELPER FUNCTIONS
@@ -38,11 +33,15 @@ function base64encode(input) {
 // ==========================================
 
 async function redirectToSpotifyLogin() {
+    console.log('Starting Spotify login flow...');
+    
     const codeVerifier = generateRandomString(64);
     const hashed = await sha256(codeVerifier);
     const codeChallenge = base64encode(hashed);
 
+    // Save code verifier BEFORE redirect
     localStorage.setItem('code_verifier', codeVerifier);
+    console.log('Code verifier saved:', localStorage.getItem('code_verifier') ? 'YES ✅' : 'NO ❌');
 
     const scopes = 'user-top-read user-read-private user-read-email';
     const authUrl = new URL('https://accounts.spotify.com/authorize');
@@ -57,36 +56,38 @@ async function redirectToSpotifyLogin() {
     };
 
     authUrl.search = new URLSearchParams(params).toString();
-    window.location.href = authUrl.toString();
+    
+    console.log('Redirecting to Spotify...');
+    
+    // Small delay to ensure localStorage is written
+    setTimeout(() => {
+        window.location.href = authUrl.toString();
+    }, 100);
 }
 
-function checkToken() {
+// ==========================================
+// CHECK TOKEN AND START APP
+// ==========================================
+
+(async function() {
     const token = localStorage.getItem('spotify_token');
     const expiry = localStorage.getItem('spotify_token_expiry');
     
     if (!token || !expiry || Date.now() > parseInt(expiry)) {
         console.log('No valid token, redirecting to login...');
-        redirectToSpotifyLogin();
-        return false;
+        await redirectToSpotifyLogin();
+    } else {
+        console.log('Token found, starting app...');
+        startApp();
     }
-    
-    return true;
-}
-
-// Check token on page load
-if (!checkToken()) {
-    // Stop execution - redirecting to login
-} else {
-    // Token exists, start the app
-    startApp();
-}
+})();
 
 // ==========================================
 // MAIN APPLICATION
 // ==========================================
 
 function startApp() {
-    console.log('Starting music player...');
+    console.log('🎵 Starting music player...');
 
     // ==========================================
     // API FUNCTIONS
