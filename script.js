@@ -39,7 +39,6 @@ async function redirectToSpotifyLogin() {
     const hashed = await sha256(codeVerifier);
     const codeChallenge = base64encode(hashed);
 
-    // Save code verifier BEFORE redirect
     localStorage.setItem('code_verifier', codeVerifier);
     console.log('Code verifier saved:', localStorage.getItem('code_verifier') ? 'YES ✅' : 'NO ❌');
 
@@ -59,7 +58,6 @@ async function redirectToSpotifyLogin() {
     
     console.log('Redirecting to Spotify...');
     
-    // Small delay to ensure localStorage is written
     setTimeout(() => {
         window.location.href = authUrl.toString();
     }, 100);
@@ -229,12 +227,30 @@ function startApp() {
             albumArt.style.background = `linear-gradient(135deg, ${song.color} 0%, ${song.color}dd 100%)`;
         }
 
+        // Check if preview is available
         if (song.previewUrl) {
             audioElement.src = song.previewUrl;
             audioElement.volume = volume;
             audioElement.load();
+            console.log('✅ Audio loaded:', song.title);
         } else {
             audioElement.src = '';
+            console.warn('⚠️ No preview for:', song.title);
+            
+            // Auto-skip to next song with preview
+            console.log('Skipping to next song...');
+            setTimeout(() => {
+                const nextIndex = findNextSongWithPreview(currentSongIndex);
+                if (nextIndex !== -1) {
+                    loadSong(nextIndex);
+                    if (isPlaying) {
+                        setTimeout(() => audioElement.play(), 200);
+                    }
+                } else {
+                    console.warn('No more songs with previews');
+                }
+            }, 500);
+            return;
         }
 
         progressFill.style.width = '0%';
@@ -249,6 +265,16 @@ function startApp() {
             recentlyPlayed.unshift(song.id);
             if (recentlyPlayed.length > 5) recentlyPlayed.pop();
         }
+    }
+
+    function findNextSongWithPreview(startIndex) {
+        for (let i = 1; i < playlist.length; i++) {
+            const nextIndex = (startIndex + i) % playlist.length;
+            if (playlist[nextIndex].previewUrl) {
+                return nextIndex;
+            }
+        }
+        return -1;
     }
 
     function updateProgress() {
@@ -280,14 +306,26 @@ function startApp() {
             playIcon.classList.add('hidden');
             pauseIcon.classList.remove('hidden');
             vinylRecord.classList.add('spinning');
-            if (audioElement.src) {
+            
+            if (audioElement.src && audioElement.src !== window.location.href) {
                 audioElement.play().catch(err => {
                     console.error('Playback error:', err);
                     isPlaying = false;
                     playIcon.classList.remove('hidden');
                     pauseIcon.classList.add('hidden');
                     vinylRecord.classList.remove('spinning');
+                    
+                    if (err.name === 'NotSupportedError') {
+                        console.log('No preview available, trying next song...');
+                        setTimeout(() => nextTrack(), 500);
+                    }
                 });
+            } else {
+                console.warn('No audio source loaded');
+                isPlaying = false;
+                playIcon.classList.remove('hidden');
+                pauseIcon.classList.add('hidden');
+                vinylRecord.classList.remove('spinning');
             }
         } else {
             playIcon.classList.remove('hidden');
@@ -430,8 +468,9 @@ function startApp() {
             const isFavorited = favorites.includes(song.id);
 
             card.innerHTML = `
-                <div class="song-thumbnail" style="${song.albumImage ? `background-image: url(${song.albumImage}); background-size: cover;` : `background: ${song.color}`}">
+                <div class="song-thumbnail" style="${song.albumImage ? `background-image: url(${song.albumImage}); background-size: cover; position: relative;` : `background: ${song.color}; position: relative;`}">
                     ${!song.albumImage ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>` : ''}
+                    ${!song.previewUrl ? `<div style="position: absolute; top: 5px; right: 5px; background: rgba(239, 68, 68, 0.9); color: white; padding: 3px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; text-transform: uppercase;">No Preview</div>` : ''}
                 </div>
                 <div class="song-card-info">
                     <div class="song-card-title">${song.title}</div>
@@ -542,12 +581,20 @@ function startApp() {
     // ==========================================
 
     async function init() {
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading...</div>';
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
         const tracks = await getTopTracks();
         if (tracks && tracks.length > 0) {
             songs = tracks.map((track, index) => convertSpotifyTrack(track, index));
             playlist = [...songs];
-            loadSong(0);
+            
+            // Find first song with preview
+            const firstPlayableIndex = playlist.findIndex(song => song.previewUrl);
+            if (firstPlayableIndex !== -1) {
+                loadSong(firstPlayableIndex);
+            } else {
+                loadSong(0);
+            }
+            
             updatePlaylistUI();
             totalTimeEl.textContent = formatTime(duration);
             currentTimeEl.textContent = formatTime(currentTime);
