@@ -29,59 +29,97 @@
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .debug {
+            margin-top: 20px;
+            padding: 10px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            font-size: 12px;
+            max-width: 500px;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
     <div>
-        <div class="spinner"></div>
+        <div class="spinner" id="spinner"></div>
         <h2 id="status">🎵 Connecting...</h2>
         <p id="msg">Please wait</p>
+        <div id="debug" class="debug" style="display: none;"></div>
     </div>
 
     <script>
         const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d';
-        const REDIRECT_URI = window.location.origin + '/callback.html';
+        
+        // Use exact URL format
+        const REDIRECT_URI = 'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html';
+        
+        console.log('=== CALLBACK DEBUG ===');
+        console.log('Redirect URI:', REDIRECT_URI);
+        console.log('Current URL:', window.location.href);
         
         const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
         const err = params.get('error');
 
+        const debugEl = document.getElementById('debug');
+        debugEl.style.display = 'block';
+        debugEl.innerHTML = `Redirect URI: ${REDIRECT_URI}`;
+
         if (err) {
+            document.getElementById('spinner').style.display = 'none';
             document.getElementById('status').textContent = '❌ Error';
             document.getElementById('msg').textContent = err;
         } else if (code) {
             const verifier = localStorage.getItem('code_verifier');
             
+            console.log('Code verifier:', verifier ? 'Found' : 'Missing');
+            
+            const tokenBody = {
+                client_id: CLIENT_ID,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: REDIRECT_URI,
+                code_verifier: verifier || '',
+            };
+            
+            console.log('Token request body:', tokenBody);
+            
             fetch('https://accounts.spotify.com/api/token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    client_id: CLIENT_ID,
-                    grant_type: 'authorization_code',
-                    code: code,
-                    redirect_uri: REDIRECT_URI,
-                    code_verifier: verifier,
-                })
+                body: new URLSearchParams(tokenBody)
             })
-            .then(r => r.json())
+            .then(r => {
+                console.log('Response status:', r.status);
+                return r.json();
+            })
             .then(data => {
+                console.log('Response data:', data);
+                
                 if (data.access_token) {
                     localStorage.setItem('spotify_token', data.access_token);
                     localStorage.setItem('spotify_token_expiry', Date.now() + (data.expires_in * 1000));
                     localStorage.removeItem('code_verifier');
                     document.getElementById('status').textContent = '✅ Success!';
+                    document.getElementById('msg').textContent = 'Redirecting...';
                     setTimeout(() => window.location.href = 'index.html', 1000);
                 } else {
+                    document.getElementById('spinner').style.display = 'none';
                     document.getElementById('status').textContent = '❌ Failed';
-                    document.getElementById('msg').textContent = data.error || 'Unknown error';
+                    document.getElementById('msg').textContent = data.error_description || data.error || 'Token error';
+                    debugEl.innerHTML += '<br><br>Error: ' + JSON.stringify(data);
                 }
             })
-            .catch(() => {
-                document.getElementById('status').textContent = '❌ Failed';
-                document.getElementById('msg').textContent = 'Network error';
+            .catch(e => {
+                console.error('Fetch error:', e);
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('status').textContent = '❌ Network Error';
+                document.getElementById('msg').textContent = e.message;
             });
         } else {
-            document.getElementById('status').textContent = '⚠️ No code';
+            document.getElementById('spinner').style.display = 'none';
+            document.getElementById('status').textContent = '⚠️ No Code';
             document.getElementById('msg').textContent = 'Missing authorization code';
         }
     </script>
