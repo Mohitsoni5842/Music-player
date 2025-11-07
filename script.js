@@ -227,7 +227,6 @@ function startApp() {
             albumArt.style.background = `linear-gradient(135deg, ${song.color} 0%, ${song.color}dd 100%)`;
         }
 
-        // Check if preview is available
         if (song.previewUrl) {
             audioElement.src = song.previewUrl;
             audioElement.volume = volume;
@@ -237,7 +236,6 @@ function startApp() {
             audioElement.src = '';
             console.warn('⚠️ No preview for:', song.title);
             
-            // Auto-skip to next song with preview
             console.log('Skipping to next song...');
             setTimeout(() => {
                 const nextIndex = findNextSongWithPreview(currentSongIndex);
@@ -434,6 +432,12 @@ function startApp() {
             if (results && results.length > 0) {
                 playlist = results.map((track, index) => convertSpotifyTrack(track, index));
                 updatePlaylistUI();
+                
+                // Auto-load first song with preview
+                const firstWithPreview = playlist.findIndex(s => s.previewUrl);
+                if (firstWithPreview !== -1) {
+                    loadSong(firstWithPreview);
+                }
             } else {
                 playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No results</div>';
             }
@@ -580,28 +584,89 @@ function startApp() {
     // INITIALIZE
     // ==========================================
 
-    async function init() {
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
-        const tracks = await getTopTracks();
-        if (tracks && tracks.length > 0) {
-            songs = tracks.map((track, index) => convertSpotifyTrack(track, index));
-            playlist = [...songs];
+    async function loadPopularTracksWithPreviews() {
+        try {
+            const searchQueries = [
+                'Taylor Swift',
+                'Ed Sheeran',
+                'The Weeknd',
+                'Dua Lipa',
+                'Bruno Mars',
+                'Billie Eilish',
+                'Coldplay',
+                'Imagine Dragons'
+            ];
             
-            // Find first song with preview
-            const firstPlayableIndex = playlist.findIndex(song => song.previewUrl);
-            if (firstPlayableIndex !== -1) {
-                loadSong(firstPlayableIndex);
-            } else {
-                loadSong(0);
+            let allTracks = [];
+            
+            for (const query of searchQueries) {
+                const results = await searchTracks(query);
+                if (results && results.length > 0) {
+                    const tracksWithPreviews = results.filter(track => track.preview_url);
+                    allTracks = allTracks.concat(tracksWithPreviews);
+                    
+                    if (allTracks.length >= 40) break;
+                }
             }
             
-            updatePlaylistUI();
-            totalTimeEl.textContent = formatTime(duration);
-            currentTimeEl.textContent = formatTime(currentTime);
-            console.log('✅ Loaded', songs.length, 'songs');
-        } else {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found</div>';
+            if (allTracks.length > 0) {
+                songs = allTracks.slice(0, 50).map((track, index) => convertSpotifyTrack(track, index));
+                playlist = [...songs];
+                
+                loadSong(0);
+                updatePlaylistUI();
+                
+                console.log(`✅ Loaded ${songs.length} popular songs with previews`);
+                
+                const messageDiv = document.createElement('div');
+                messageDiv.style.cssText = 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: center;';
+                messageDiv.innerHTML = `
+                    <h3 style="margin: 0 0 10px 0; font-size: 18px;">ℹ️ Playing Popular Tracks</h3>
+                    <p style="margin: 0; font-size: 13px; opacity: 0.95;">
+                        Your top tracks don't have preview clips available. Playing popular international tracks instead.<br>
+                        💡 Try searching for your favorite artists!
+                    </p>
+                `;
+                playlistContainer.insertBefore(messageDiv, playlistContainer.firstChild);
+            } else {
+                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks with previews available. Try searching!</div>';
+            }
+        } catch (error) {
+            console.error('Failed to load popular tracks:', error);
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music. Please refresh.</div>';
         }
+    }
+
+    async function init() {
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
+        
+        const tracks = await getTopTracks();
+        
+        if (tracks && tracks.length > 0) {
+            songs = tracks.map((track, index) => convertSpotifyTrack(track, index));
+            
+            const songsWithPreviews = songs.filter(song => song.previewUrl);
+            
+            console.log(`✅ Loaded ${songs.length} songs, ${songsWithPreviews.length} have previews`);
+            
+            if (songsWithPreviews.length > 0) {
+                playlist = [...songs];
+                
+                const firstPlayableIndex = playlist.findIndex(song => song.previewUrl);
+                loadSong(firstPlayableIndex);
+                updatePlaylistUI();
+            } else {
+                console.log('⚠️ No previews in your top tracks. Loading popular songs...');
+                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading popular tracks...</div>';
+                await loadPopularTracksWithPreviews();
+            }
+        } else {
+            console.log('Failed to load user tracks. Loading popular songs...');
+            await loadPopularTracksWithPreviews();
+        }
+        
+        totalTimeEl.textContent = formatTime(duration);
+        currentTimeEl.textContent = formatTime(currentTime);
     }
 
     init();
