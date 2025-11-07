@@ -40,7 +40,6 @@ async function redirectToSpotifyLogin() {
     const codeChallenge = base64encode(hashed);
 
     localStorage.setItem('code_verifier', codeVerifier);
-    console.log('Code verifier saved:', localStorage.getItem('code_verifier') ? 'YES ✅' : 'NO ❌');
 
     const scopes = 'user-top-read user-read-private user-read-email';
     const authUrl = new URL('https://accounts.spotify.com/authorize');
@@ -55,8 +54,6 @@ async function redirectToSpotifyLogin() {
     };
 
     authUrl.search = new URLSearchParams(params).toString();
-    
-    console.log('Redirecting to Spotify...');
     
     setTimeout(() => {
         window.location.href = authUrl.toString();
@@ -119,7 +116,7 @@ function startApp() {
     async function getTopTracks() {
         try {
             const response = await fetchWebApi('v1/me/top/tracks?time_range=long_term&limit=50', 'GET');
-            return response.items;
+            return response ? response.items : [];
         } catch (error) {
             console.error('Error fetching tracks:', error);
             return [];
@@ -129,7 +126,7 @@ function startApp() {
     async function searchTracks(query) {
         try {
             const response = await fetchWebApi(`v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`, 'GET');
-            return response.tracks.items;
+            return response && response.tracks ? response.tracks.items : [];
         } catch (error) {
             console.error('Error searching tracks:', error);
             return [];
@@ -144,7 +141,6 @@ function startApp() {
             artist: track.artists.map(artist => artist.name).join(', '),
             duration: Math.floor(track.duration_ms / 1000),
             album: track.album.name,
-            genre: track.album.genres ? track.album.genres[0] : 'Unknown',
             color: colors[index % colors.length],
             albumImage: track.album.images[0] ? track.album.images[0].url : null,
             previewUrl: track.preview_url,
@@ -158,7 +154,7 @@ function startApp() {
 
     let isPlaying = false;
     let currentTime = 0;
-    let duration = 225;
+    let duration = 30;
     let volume = 0.7;
     let isShuffle = false;
     let isRepeat = false;
@@ -231,24 +227,10 @@ function startApp() {
             audioElement.src = song.previewUrl;
             audioElement.volume = volume;
             audioElement.load();
-            console.log('✅ Audio loaded:', song.title);
+            console.log('✅ Loaded:', song.title);
         } else {
             audioElement.src = '';
-            console.warn('⚠️ No preview for:', song.title);
-            
-            console.log('Skipping to next song...');
-            setTimeout(() => {
-                const nextIndex = findNextSongWithPreview(currentSongIndex);
-                if (nextIndex !== -1) {
-                    loadSong(nextIndex);
-                    if (isPlaying) {
-                        setTimeout(() => audioElement.play(), 200);
-                    }
-                } else {
-                    console.warn('No more songs with previews');
-                }
-            }, 500);
-            return;
+            console.warn('⚠️ No preview:', song.title);
         }
 
         progressFill.style.width = '0%';
@@ -263,16 +245,6 @@ function startApp() {
             recentlyPlayed.unshift(song.id);
             if (recentlyPlayed.length > 5) recentlyPlayed.pop();
         }
-    }
-
-    function findNextSongWithPreview(startIndex) {
-        for (let i = 1; i < playlist.length; i++) {
-            const nextIndex = (startIndex + i) % playlist.length;
-            if (playlist[nextIndex].previewUrl) {
-                return nextIndex;
-            }
-        }
-        return -1;
     }
 
     function updateProgress() {
@@ -303,7 +275,7 @@ function startApp() {
         if (isPlaying) {
             playIcon.classList.add('hidden');
             pauseIcon.classList.remove('hidden');
-            vinylRecord.classList.add('spinning');
+            if (vinylRecord) vinylRecord.classList.add('spinning');
             
             if (audioElement.src && audioElement.src !== window.location.href) {
                 audioElement.play().catch(err => {
@@ -311,24 +283,20 @@ function startApp() {
                     isPlaying = false;
                     playIcon.classList.remove('hidden');
                     pauseIcon.classList.add('hidden');
-                    vinylRecord.classList.remove('spinning');
-                    
-                    if (err.name === 'NotSupportedError') {
-                        console.log('No preview available, trying next song...');
-                        setTimeout(() => nextTrack(), 500);
-                    }
+                    if (vinylRecord) vinylRecord.classList.remove('spinning');
+                    nextTrack();
                 });
             } else {
-                console.warn('No audio source loaded');
                 isPlaying = false;
                 playIcon.classList.remove('hidden');
                 pauseIcon.classList.add('hidden');
-                vinylRecord.classList.remove('spinning');
+                if (vinylRecord) vinylRecord.classList.remove('spinning');
+                nextTrack();
             }
         } else {
             playIcon.classList.remove('hidden');
             pauseIcon.classList.add('hidden');
-            vinylRecord.classList.remove('spinning');
+            if (vinylRecord) vinylRecord.classList.remove('spinning');
             if (audioElement.src) {
                 audioElement.pause();
             }
@@ -379,23 +347,39 @@ function startApp() {
             currentSongIndex = (currentSongIndex - 1 + playlist.length) % playlist.length;
             loadSong(currentSongIndex);
             if (isPlaying) {
-                audioElement.pause();
                 setTimeout(() => audioElement.play(), 100);
             }
         }
     }
 
     function nextTrack() {
-        if (isShuffle) {
-            currentSongIndex = Math.floor(Math.random() * playlist.length);
-        } else {
-            currentSongIndex = (currentSongIndex + 1) % playlist.length;
-        }
-        loadSong(currentSongIndex);
-        if (isPlaying) {
-            audioElement.pause();
-            setTimeout(() => audioElement.play(), 100);
-        }
+        // Find next song with preview
+        let attempts = 0;
+        let nextIndex = currentSongIndex;
+        
+        do {
+            if (isShuffle) {
+                nextIndex = Math.floor(Math.random() * playlist.length);
+            } else {
+                nextIndex = (nextIndex + 1) % playlist.length;
+            }
+            attempts++;
+            
+            if (playlist[nextIndex] && playlist[nextIndex].previewUrl) {
+                currentSongIndex = nextIndex;
+                loadSong(currentSongIndex);
+                if (isPlaying) {
+                    setTimeout(() => audioElement.play(), 100);
+                }
+                return;
+            }
+        } while (attempts < playlist.length);
+        
+        console.warn('No songs with preview available');
+        isPlaying = false;
+        playIcon.classList.remove('hidden');
+        pauseIcon.classList.add('hidden');
+        if (vinylRecord) vinylRecord.classList.remove('spinning');
     }
 
     function toggleFavorite() {
@@ -433,7 +417,6 @@ function startApp() {
                 playlist = results.map((track, index) => convertSpotifyTrack(track, index));
                 updatePlaylistUI();
                 
-                // Auto-load first song with preview
                 const firstWithPreview = playlist.findIndex(s => s.previewUrl);
                 if (firstWithPreview !== -1) {
                     loadSong(firstWithPreview);
@@ -457,8 +440,9 @@ function startApp() {
 
     function updatePlaylistUI() {
         playlistContainer.innerHTML = '';
+        
         if (playlist.length === 0) {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No songs</div>';
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No songs available</div>';
             return;
         }
 
@@ -474,7 +458,7 @@ function startApp() {
             card.innerHTML = `
                 <div class="song-thumbnail" style="${song.albumImage ? `background-image: url(${song.albumImage}); background-size: cover; position: relative;` : `background: ${song.color}; position: relative;`}">
                     ${!song.albumImage ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>` : ''}
-                    ${!song.previewUrl ? `<div style="position: absolute; top: 5px; right: 5px; background: rgba(239, 68, 68, 0.9); color: white; padding: 3px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; text-transform: uppercase;">No Preview</div>` : ''}
+                    ${!song.previewUrl ? `<div style="position: absolute; top: 5px; right: 5px; background: rgba(239, 68, 68, 0.9); color: white; padding: 3px 8px; border-radius: 4px; font-size: 9px; font-weight: bold;">NO PREVIEW</div>` : ''}
                 </div>
                 <div class="song-card-info">
                     <div class="song-card-title">${song.title}</div>
@@ -490,15 +474,13 @@ function startApp() {
 
             card.addEventListener('click', (e) => {
                 if (!e.target.closest('.song-card-favorite')) {
-                    loadSong(index);
-                    if (!isPlaying) {
-                        setTimeout(() => togglePlay(), 100);
+                    if (song.previewUrl) {
+                        loadSong(index);
+                        if (!isPlaying) {
+                            setTimeout(() => togglePlay(), 100);
+                        }
                     } else {
-                        audioElement.pause();
-                        isPlaying = false;
-                        playIcon.classList.remove('hidden');
-                        pauseIcon.classList.add('hidden');
-                        setTimeout(() => togglePlay(), 100);
+                        alert('This song has no preview available. Try another song!');
                     }
                 }
             });
@@ -542,7 +524,7 @@ function startApp() {
 
     playPauseBtn.addEventListener('click', togglePlay);
     progressBar.addEventListener('click', seek);
-    volumeSlider.addEventListener('click', changeVolume);
+    if (volumeSlider) volumeSlider.addEventListener('click', changeVolume);
     shuffleBtn.addEventListener('click', toggleShuffle);
     repeatBtn.addEventListener('click', toggleRepeat);
     prevBtn.addEventListener('click', previousTrack);
@@ -581,92 +563,61 @@ function startApp() {
     setInterval(updateProgress, 100);
 
     // ==========================================
-    // INITIALIZE
+    // INITIALIZE WITH POPULAR TRACKS
     // ==========================================
 
-    async function loadPopularTracksWithPreviews() {
-        try {
-            const searchQueries = [
-                'Taylor Swift',
-                'Ed Sheeran',
-                'The Weeknd',
-                'Dua Lipa',
-                'Bruno Mars',
-                'Billie Eilish',
-                'Coldplay',
-                'Imagine Dragons'
-            ];
+    async function init() {
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;"><div style="font-size: 40px; margin-bottom: 15px;">🎵</div>Loading music...</div>';
+        
+        // Try user's top tracks first
+        const userTracks = await getTopTracks();
+        const userSongs = userTracks ? userTracks.map((track, index) => convertSpotifyTrack(track, index)) : [];
+        const userSongsWithPreviews = userSongs.filter(s => s.previewUrl);
+        
+        console.log(`User tracks: ${userSongs.length}, with previews: ${userSongsWithPreviews.length}`);
+        
+        if (userSongsWithPreviews.length >= 5) {
+            // Enough user songs with previews
+            songs = userSongs;
+            playlist = [...songs];
+            const firstIndex = playlist.findIndex(s => s.previewUrl);
+            loadSong(firstIndex);
+            updatePlaylistUI();
+            console.log('✅ Loaded user tracks');
+        } else {
+            // Load popular tracks
+            console.log('Loading popular tracks...');
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;"><div style="font-size: 40px; margin-bottom: 15px;">🎵</div>Loading popular tracks with previews...</div>';
             
+            const artists = ['Ed Sheeran', 'Taylor Swift', 'The Weeknd', 'Dua Lipa', 'Bruno Mars'];
             let allTracks = [];
             
-            for (const query of searchQueries) {
-                const results = await searchTracks(query);
-                if (results && results.length > 0) {
-                    const tracksWithPreviews = results.filter(track => track.preview_url);
-                    allTracks = allTracks.concat(tracksWithPreviews);
-                    
-                    if (allTracks.length >= 40) break;
-                }
+            for (const artist of artists) {
+                const results = await searchTracks(artist);
+                const withPreviews = results.filter(t => t.preview_url);
+                allTracks = allTracks.concat(withPreviews);
+                if (allTracks.length >= 30) break;
             }
             
             if (allTracks.length > 0) {
-                songs = allTracks.slice(0, 50).map((track, index) => convertSpotifyTrack(track, index));
+                songs = allTracks.slice(0, 40).map((track, index) => convertSpotifyTrack(track, index));
                 playlist = [...songs];
-                
                 loadSong(0);
                 updatePlaylistUI();
                 
-                console.log(`✅ Loaded ${songs.length} popular songs with previews`);
+                const msg = document.createElement('div');
+                msg.style.cssText = 'background: linear-gradient(135deg, #667eea, #764ba2); color: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;';
+                msg.innerHTML = `<strong>🎵 Playing Popular Tracks</strong><br><small style="opacity:0.9">Your songs don't have previews. Search for your favorite artists!</small>`;
+                playlistContainer.insertBefore(msg, playlistContainer.firstChild);
                 
-                const messageDiv = document.createElement('div');
-                messageDiv.style.cssText = 'background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; padding: 20px; margin-bottom: 20px; text-align: center;';
-                messageDiv.innerHTML = `
-                    <h3 style="margin: 0 0 10px 0; font-size: 18px;">ℹ️ Playing Popular Tracks</h3>
-                    <p style="margin: 0; font-size: 13px; opacity: 0.95;">
-                        Your top tracks don't have preview clips available. Playing popular international tracks instead.<br>
-                        💡 Try searching for your favorite artists!
-                    </p>
-                `;
-                playlistContainer.insertBefore(messageDiv, playlistContainer.firstChild);
+                console.log(`✅ Loaded ${songs.length} popular tracks`);
             } else {
-                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks with previews available. Try searching!</div>';
+                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Unable to load tracks. Try searching!</div>';
             }
-        } catch (error) {
-            console.error('Failed to load popular tracks:', error);
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music. Please refresh.</div>';
-        }
-    }
-
-    async function init() {
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
-        
-        const tracks = await getTopTracks();
-        
-        if (tracks && tracks.length > 0) {
-            songs = tracks.map((track, index) => convertSpotifyTrack(track, index));
-            
-            const songsWithPreviews = songs.filter(song => song.previewUrl);
-            
-            console.log(`✅ Loaded ${songs.length} songs, ${songsWithPreviews.length} have previews`);
-            
-            if (songsWithPreviews.length > 0) {
-                playlist = [...songs];
-                
-                const firstPlayableIndex = playlist.findIndex(song => song.previewUrl);
-                loadSong(firstPlayableIndex);
-                updatePlaylistUI();
-            } else {
-                console.log('⚠️ No previews in your top tracks. Loading popular songs...');
-                playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading popular tracks...</div>';
-                await loadPopularTracksWithPreviews();
-            }
-        } else {
-            console.log('Failed to load user tracks. Loading popular songs...');
-            await loadPopularTracksWithPreviews();
         }
         
-        totalTimeEl.textContent = formatTime(duration);
-        currentTimeEl.textContent = formatTime(currentTime);
+        totalTimeEl.textContent = formatTime(30);
+        currentTimeEl.textContent = formatTime(0);
     }
 
     init();
