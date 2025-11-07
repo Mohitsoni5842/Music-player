@@ -1,46 +1,87 @@
-// const token = 'BQDU3S1_jvgENfrMSBBE18hHNqIa0TJMBWIzGbmIS50l60vyf5u55cwModae4WgcCowTGo6HxQLAcV_GF3mjNmOcvKlYIdXfqGgpoCW_uAp5lw67nS7sojk8vvKzaBTxe2xSvsA5XFxqzSwo9qu8lI8swNuqGjCVdFFzhfvgtIyHyqgCq52yUf5Gv1CAu3Ea4E__-CiA61sGr8nyNIjy4ywoREIfUHZVNAbZPhYcOaZQYGBwkyUkyne_Vcm4ebVg5lBXJh5Ryat9ABORKeJR1dOgQIyHzorjms39ntYNOBIcjHlWDmw6s1l_2znBbXNvv9ln';
+// ==========================================
+// SPOTIFY CONFIGURATION
+// ==========================================
 
-// async function fetchWebApi(endpoint, method, body) {
-//     const res = await fetch(`https://api.spotify.com/${endpoint}`, {
-//         headers: {
-//             Authorization: `Bearer ${token}`,
-//         },
-//         method,
-//         body: JSON.stringify(body)
-//     });
-//     return await res.json();
-// }
+// Replace with your Spotify Client ID
+const CLIENT_ID = '12a6123eb15d451c976d168ce0fce55d'; // ⚠️ REPLACE THIS
 
-// async function getTopTracks() {
-//     return (await fetchWebApi(
-//         'v1/me/top/tracks?time_range=long_term&limit=5', 'GET'
-//     )).items;
-// }
+// Determine environment and set redirect URI
+const isProduction = window.location.hostname !== '127.0.0.1' && window.location.hostname !== 'localhost';
 
-// (async() => {
-//     const topTracks = await getTopTracks();
+const REDIRECT_URI = isProduction ?
+    'https://music-player-mohitsoni5842s-projects.vercel.app/callback.html' // Your actual Vercel URL
+    :
+    'http://127.0.0.1:3000/callback.html';
 
-//     // ✅ Fixed: removed optional chaining
-//     if (topTracks) {
-//         console.log(
-//             topTracks.map(
-//                 ({ name, artists }) =>
-//                 `${name} by ${artists.map(artist => artist.name).join(', ')}`
-//             )
-//         );
-//     }
-// })();
+// ==========================================
+// TOKEN MANAGEMENT
+// ==========================================
 
-const token = 'BQDU3S1_jvgENfrMSBBE18hHNqIa0TJMBWIzGbmIS50l60vyf5u55cwModae4WgcCowTGo6HxQLAcV_GF3mjNmOcvKlYIdXfqGgpoCW_uAp5lw67nS7sojk8vvKzaBTxe2xSvsA5XFxqzSwo9qu8lI8swNuqGjCVdFFzhfvgtIyHyqgCq52yUf5Gv1CAu3Ea4E__-CiA61sGr8nyNIjy4ywoREIfUHZVNAbZPhYcOaZQYGBwkyUkyne_Vcm4ebVg5lBXJh5Ryat9ABORKeJR1dOgQIyHzorjms39ntYNOBIcjHlWDmw6s1l_2znBbXNvv9ln';
+function getToken() {
+    const token = localStorage.getItem('spotify_token');
+    const expiry = localStorage.getItem('spotify_token_expiry');
+
+    if (!token || !expiry) {
+        console.log('No token found, redirecting to login...');
+        redirectToSpotifyLogin();
+        return null;
+    }
+
+    // Check if token expired
+    if (Date.now() > parseInt(expiry)) {
+        console.log('Token expired, redirecting to login...');
+        localStorage.removeItem('spotify_token');
+        localStorage.removeItem('spotify_token_expiry');
+        redirectToSpotifyLogin();
+        return null;
+    }
+
+    return token;
+}
+
+function redirectToSpotifyLogin() {
+    const scopes = 'user-top-read user-read-private user-read-email';
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(scopes)}&show_dialog=true`;
+
+    window.location.href = authUrl;
+}
+
+// Get token
+const token = getToken();
+
+if (!token) {
+    throw new Error('Redirecting to Spotify login...');
+}
+
+// ==========================================
+// SPOTIFY API FUNCTIONS
+// ==========================================
 
 async function fetchWebApi(endpoint, method, body) {
+    const currentToken = localStorage.getItem('spotify_token');
+
+    if (!currentToken) {
+        redirectToSpotifyLogin();
+        return null;
+    }
+
     const res = await fetch(`https://api.spotify.com/${endpoint}`, {
         headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${currentToken}`,
         },
         method,
         body: body ? JSON.stringify(body) : undefined
     });
+
+    // Handle unauthorized (token expired)
+    if (res.status === 401) {
+        console.log('Token invalid, clearing and redirecting to login...');
+        localStorage.removeItem('spotify_token');
+        localStorage.removeItem('spotify_token_expiry');
+        redirectToSpotifyLogin();
+        return null;
+    }
+
     return await res.json();
 }
 
@@ -58,32 +99,24 @@ async function getTopTracks() {
     }
 }
 
-// Fetch user's playlists
-async function getUserPlaylists() {
-    try {
-        const response = await fetchWebApi('v1/me/playlists?limit=50', 'GET');
-        return response.items;
-    } catch (error) {
-        console.error('Error fetching playlists:', error);
-        return [];
-    }
-}
-
-// Fetch tracks from a specific playlist
-async function getPlaylistTracks(playlistId) {
+// Search tracks on Spotify
+async function searchTracks(query) {
     try {
         const response = await fetchWebApi(
-            `v1/playlists/${playlistId}/tracks`,
+            `v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
             'GET'
         );
-        return response.items.map(item => item.track);
+        return response.tracks.items;
     } catch (error) {
-        console.error('Error fetching playlist tracks:', error);
+        console.error('Error searching tracks:', error);
         return [];
     }
 }
 
-// Convert Spotify track to your song format
+// ==========================================
+// DATA CONVERSION
+// ==========================================
+
 function convertSpotifyTrack(track, index) {
     const colors = ['#8B5CF6', '#3B82F6', '#EC4899', '#10B981', '#F59E0B', '#EF4444', '#6366F1', '#059669', '#F97316', '#06B6D4'];
 
@@ -101,7 +134,10 @@ function convertSpotifyTrack(track, index) {
     };
 }
 
-// Player state
+// ==========================================
+// PLAYER STATE
+// ==========================================
+
 let isPlaying = false;
 let currentTime = 0;
 let duration = 225;
@@ -111,14 +147,19 @@ let isRepeat = false;
 let currentSongIndex = 0;
 let currentView = 'library';
 let audioElement = new Audio();
+let searchTimeout = null;
 
-// Song database - will be populated from Spotify
+// Song database
 let songs = [];
 let playlist = [];
 let recentlyPlayed = [];
 let favorites = [];
+let searchResults = [];
 
-// DOM elements
+// ==========================================
+// DOM ELEMENTS
+// ==========================================
+
 const playPauseBtn = document.getElementById('playPause');
 const playIcon = document.querySelector('.play-icon');
 const pauseIcon = document.querySelector('.pause-icon');
@@ -143,24 +184,38 @@ const albumArt = document.querySelector('.album-art');
 const menuItems = document.querySelectorAll('.menu-item');
 const favoriteBtn = document.getElementById('favoriteBtn');
 
-// Format time in MM:SS
+// ==========================================
+// UTILITY FUNCTIONS
+// ==========================================
+
 function formatTime(seconds) {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Load and play song with actual audio
+// ==========================================
+// PLAYBACK FUNCTIONS
+// ==========================================
+
 function loadSong(index) {
+    console.log('🎵 Loading song at index:', index);
     currentSongIndex = index;
     const song = playlist[index];
+
+    if (!song) {
+        console.error('❌ Song not found at index:', index);
+        return;
+    }
+
+    console.log('📀 Song:', song.title, 'by', song.artist);
 
     songTitle.textContent = song.title;
     artistName.textContent = song.artist;
     duration = song.duration;
     currentTime = 0;
 
-    // Update album art with actual Spotify image
+    // Update album art
     if (song.albumImage) {
         albumArt.style.backgroundImage = `url(${song.albumImage})`;
         albumArt.style.backgroundSize = 'cover';
@@ -169,11 +224,15 @@ function loadSong(index) {
         albumArt.style.background = `linear-gradient(135deg, ${song.color} 0%, ${song.color}dd 100%)`;
     }
 
-    // Load actual audio preview if available
+    // Load audio preview
     if (song.previewUrl) {
         audioElement.src = song.previewUrl;
         audioElement.volume = volume;
         audioElement.load();
+        console.log('✅ Audio loaded');
+    } else {
+        console.warn('⚠️ No preview URL available');
+        audioElement.src = '';
     }
 
     progressFill.style.width = '0%';
@@ -190,7 +249,6 @@ function loadSong(index) {
     }
 }
 
-// Update progress bar with real audio
 function updateProgress() {
     if (isPlaying && audioElement.src) {
         currentTime = audioElement.currentTime;
@@ -213,8 +271,9 @@ function updateProgress() {
     }
 }
 
-// Toggle play/pause with real audio
 function togglePlay() {
+    console.log('🎮 Toggle play clicked');
+
     isPlaying = !isPlaying;
 
     if (isPlaying) {
@@ -223,14 +282,23 @@ function togglePlay() {
         vinylRecord.classList.add('spinning');
 
         if (audioElement.src) {
+            console.log('▶️ Playing');
             audioElement.play().catch(err => {
-                console.error('Playback error:', err);
+                console.error('❌ Playback error:', err);
                 isPlaying = false;
                 playIcon.classList.remove('hidden');
                 pauseIcon.classList.add('hidden');
+                vinylRecord.classList.remove('spinning');
             });
+        } else {
+            console.warn('⚠️ No audio source');
+            isPlaying = false;
+            playIcon.classList.remove('hidden');
+            pauseIcon.classList.add('hidden');
+            vinylRecord.classList.remove('spinning');
         }
     } else {
+        console.log('⏸️ Paused');
         playIcon.classList.remove('hidden');
         pauseIcon.classList.add('hidden');
         vinylRecord.classList.remove('spinning');
@@ -241,7 +309,6 @@ function togglePlay() {
     }
 }
 
-// Seek in progress bar
 function seek(e) {
     const rect = progressBar.getBoundingClientRect();
     const percentage = (e.clientX - rect.left) / rect.width;
@@ -257,7 +324,6 @@ function seek(e) {
     currentTimeEl.textContent = formatTime(currentTime);
 }
 
-// Change volume
 function changeVolume(e) {
     const rect = volumeSlider.getBoundingClientRect();
     const percentage = (e.clientX - rect.left) / rect.width;
@@ -270,19 +336,16 @@ function changeVolume(e) {
     volumeHandle.style.left = `${clampedPercentage}%`;
 }
 
-// Toggle shuffle
 function toggleShuffle() {
     isShuffle = !isShuffle;
     shuffleBtn.classList.toggle('active', isShuffle);
 }
 
-// Toggle repeat
 function toggleRepeat() {
     isRepeat = !isRepeat;
     repeatBtn.classList.toggle('active', isRepeat);
 }
 
-// Previous track
 function previousTrack() {
     if (currentTime > 3) {
         currentTime = 0;
@@ -300,7 +363,6 @@ function previousTrack() {
     }
 }
 
-// Next track
 function nextTrack() {
     if (isShuffle) {
         currentSongIndex = Math.floor(Math.random() * playlist.length);
@@ -314,7 +376,6 @@ function nextTrack() {
     }
 }
 
-// Toggle favorite
 function toggleFavorite() {
     const song = playlist[currentSongIndex];
     const index = favorites.indexOf(song.id);
@@ -329,7 +390,6 @@ function toggleFavorite() {
     updatePlaylistUI();
 }
 
-// Update favorite button
 function updateFavoriteButton() {
     const song = playlist[currentSongIndex];
     if (favorites.includes(song.id)) {
@@ -339,7 +399,40 @@ function updateFavoriteButton() {
     }
 }
 
-// Filter playlist by view
+// ==========================================
+// SEARCH FUNCTIONS
+// ==========================================
+
+async function handleSearch() {
+    const searchTerm = searchInput.value.trim();
+
+    if (searchTimeout) {
+        clearTimeout(searchTimeout);
+    }
+
+    if (!searchTerm) {
+        filterPlaylist();
+        return;
+    }
+
+    playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Searching...</div>';
+
+    searchTimeout = setTimeout(async() => {
+        console.log('🔍 Searching for:', searchTerm);
+
+        const results = await searchTracks(searchTerm);
+
+        if (results && results.length > 0) {
+            searchResults = results.map((track, index) => convertSpotifyTrack(track, index));
+            playlist = searchResults;
+            updatePlaylistUI();
+            console.log('✅ Found', results.length, 'tracks');
+        } else {
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No results found</div>';
+        }
+    }, 500);
+}
+
 function filterPlaylist() {
     let filteredSongs = [...songs];
 
@@ -349,22 +442,21 @@ function filterPlaylist() {
         filteredSongs = recentlyPlayed.map(id => songs.find(s => s.id === id)).filter(Boolean);
     }
 
-    const searchTerm = searchInput.value.toLowerCase();
-    if (searchTerm) {
-        filteredSongs = filteredSongs.filter(song =>
-            song.title.toLowerCase().includes(searchTerm) ||
-            song.artist.toLowerCase().includes(searchTerm) ||
-            (song.genre && song.genre.toLowerCase().includes(searchTerm))
-        );
-    }
-
     playlist = filteredSongs.length > 0 ? filteredSongs : songs;
     updatePlaylistUI();
 }
 
-// Update playlist UI
+// ==========================================
+// UI UPDATE FUNCTIONS
+// ==========================================
+
 function updatePlaylistUI() {
     playlistContainer.innerHTML = '';
+
+    if (playlist.length === 0) {
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No songs available</div>';
+        return;
+    }
 
     playlist.forEach((song, index) => {
                 const card = document.createElement('div');
@@ -391,15 +483,28 @@ function updatePlaylistUI() {
                 </svg>
             </button>
             <div class="song-card-duration">${formatTime(song.duration)}</div>
+            ${!song.previewUrl ? '<div class="no-preview">No Preview</div>' : ''}
         `;
 
+        // Click to play
         card.addEventListener('click', (e) => {
             if (!e.target.closest('.song-card-favorite')) {
+                console.log('🎵 Card clicked:', song.title);
                 loadSong(index);
-                if (!isPlaying) togglePlay();
+                
+                if (!isPlaying) {
+                    setTimeout(() => togglePlay(), 100);
+                } else {
+                    audioElement.pause();
+                    isPlaying = false;
+                    playIcon.classList.remove('hidden');
+                    pauseIcon.classList.add('hidden');
+                    setTimeout(() => togglePlay(), 100);
+                }
             }
         });
 
+        // Favorite button
         const favoriteButton = card.querySelector('.song-card-favorite');
         favoriteButton.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -416,16 +521,16 @@ function updatePlaylistUI() {
                 updateFavoriteButton();
             }
 
-            filterPlaylist();
+            updatePlaylistUI();
         });
 
         playlistContainer.appendChild(card);
     });
 }
 
-// Switch view
 function switchView(view) {
     currentView = view;
+    searchInput.value = '';
     menuItems.forEach(item => {
         if (item.dataset.view === view) {
             item.classList.add('active');
@@ -436,7 +541,10 @@ function switchView(view) {
     filterPlaylist();
 }
 
-// Event listeners
+// ==========================================
+// EVENT LISTENERS
+// ==========================================
+
 playPauseBtn.addEventListener('click', togglePlay);
 progressBar.addEventListener('click', seek);
 volumeSlider.addEventListener('click', changeVolume);
@@ -445,7 +553,14 @@ repeatBtn.addEventListener('click', toggleRepeat);
 prevBtn.addEventListener('click', previousTrack);
 nextBtn.addEventListener('click', nextTrack);
 favoriteBtn.addEventListener('click', toggleFavorite);
-searchInput.addEventListener('input', filterPlaylist);
+searchInput.addEventListener('input', handleSearch);
+
+searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        searchInput.value = '';
+        filterPlaylist();
+    }
+});
 
 menuItems.forEach(item => {
     item.addEventListener('click', () => {
@@ -473,16 +588,16 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Update progress every 100ms
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
 setInterval(updateProgress, 100);
 
-// Initialize with Spotify data
 async function initializePlayer() {
     try {
-        // Show loading state
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px;">Loading your music...</div>';
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Loading your music...</div>';
         
-        // Fetch tracks from Spotify
         const spotifyTracks = await getTopTracks();
         
         if (spotifyTracks && spotifyTracks.length > 0) {
@@ -493,12 +608,14 @@ async function initializePlayer() {
             updatePlaylistUI();
             totalTimeEl.textContent = formatTime(duration);
             currentTimeEl.textContent = formatTime(currentTime);
+            
+            console.log('✅ Player initialized with', songs.length, 'songs');
         } else {
-            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px;">No tracks found. Please check your Spotify token.</div>';
+            playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">No tracks found. Please check your Spotify token.</div>';
         }
     } catch (error) {
         console.error('Failed to initialize player:', error);
-        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px;">Error loading music. Please refresh the page.</div>';
+        playlistContainer.innerHTML = '<div style="text-align: center; padding: 40px; color: #888;">Error loading music. Please refresh the page.</div>';
     }
 }
 
